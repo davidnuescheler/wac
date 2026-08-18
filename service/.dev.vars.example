@@ -1,0 +1,2 @@
+# Local secrets for `wrangler dev` (do not commit real secrets)
+WAC_UPLOAD_KEYS={"*":"dev-upload-key","goodness/demo":"demo-site-key"}

@@ -1,0 +1,23 @@
+name = "wac"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "f9a5d29335f63217bde8c50779556f00"
+
+workers_dev = true
+
+[[r2_buckets]]
+binding = "WAC_BUCKET"
+bucket_name = "wac"
+preview_bucket_name = "wac"
+
+# Dev upload keys live in `.dev.vars` (see `.dev.vars.example`).
+# Production secrets:
+#   wrangler secret put WAC_UPLOAD_KEYS
+# Value shape (JSON):
+#   {"*":"global-dev-key","acme/docs":"site-specific-key"}
+
+[vars]
+# Optional public config (non-secret). Secrets go in .dev.vars / wrangler secret.
+MAX_ZIP_BYTES = "52428800"

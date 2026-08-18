@@ -1,0 +1,19 @@
+{
+  "name": "wac-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Web Asset Container — upload zip bundles to R2 and serve them as static hosting",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.65.0"
+  }
+}
