@@ -3,6 +3,7 @@
  */
 
 import { contentTypeFor } from './mime.js';
+import { maybeInjectContentBridge } from './content-bridge.js';
 
 /** Manifest lives at <prefix>/.wac/manifest.json */
 export const WAC_DIR = '.wac';
@@ -85,7 +86,8 @@ function respondObject(object, matchedKey, headOnly) {
     return new Response(null, { status: 200, headers });
   }
 
-  return new Response(object.body, { status: 200, headers });
+  const response = new Response(object.body, { status: 200, headers });
+  return maybeInjectContentBridge(response, matchedKey);
 }
 
 /**
@@ -100,14 +102,19 @@ async function defaultRedirectFor(bucket, containerKey, requestUrl) {
 
   const dest = new URL(requestUrl.href);
   const basePath = `/${containerKey}`.replace(/\/+/g, '/');
-  dest.pathname = `${basePath}/${defaultsTo}`.replace(/\/+/g, '/');
+  // Encode each path segment so spaces in default filenames stay valid, but
+  // keep the incoming query string intact (?content=..., etc.).
+  const fileSegments = defaultsTo.split('/').filter(Boolean).map(encodeURIComponent);
+  dest.pathname = `${basePath}/${fileSegments.join('/')}`.replace(/\/+/g, '/');
 
+  // 302 + no-store: browsers aggressively cache 301s and can reuse a redirect
+  // target without the current query string (breaking ?content= overlays).
   return new Response(null, {
-    status: 301,
+    status: 302,
     headers: {
-      Location: dest.pathname + dest.search,
+      Location: `${dest.pathname}${dest.search}${dest.hash}`,
       'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'public, max-age=60',
+      'Cache-Control': 'private, no-store',
     },
   });
 }
@@ -161,6 +168,7 @@ export async function readWacManifest(bucket, prefix) {
  *   author?: string | null,
  *   previous?: object | null,
  *   defaultAsset?: string | null,
+ *   zipSize?: number | null,
  * }} [options]
  */
 export async function writeWacManifest(bucket, prefix, result, options = {}) {
@@ -168,6 +176,7 @@ export async function writeWacManifest(bucket, prefix, result, options = {}) {
   const previous = options.previous || null;
   const created = previous?.created || previous?.uploadedAt || now;
   const author = options.author ?? previous?.author ?? null;
+  const zipSize = Number.isFinite(options.zipSize) ? options.zipSize : (previous?.zipSize ?? null);
 
   const hasIndex = result.files.some((f) => {
     const lower = f.toLowerCase();
@@ -195,6 +204,7 @@ export async function writeWacManifest(bucket, prefix, result, options = {}) {
     lastModified: now,
     default: defaultAsset,
     hasIndex,
+    zipSize,
     files: result.files,
     fileCount: result.files.length,
     skipped: result.skipped,
@@ -285,6 +295,7 @@ export async function listWacs(bucket, org, site) {
       lastModified: meta?.lastModified ?? meta?.uploadedAt ?? (entry.uploaded ? new Date(entry.uploaded).toISOString() : null),
       default: meta?.default ?? null,
       hasIndex: meta?.hasIndex ?? null,
+      zipSize: meta?.zipSize ?? null,
       fileCount: meta?.fileCount ?? meta?.files?.length ?? null,
       files: meta?.files ?? null,
     };

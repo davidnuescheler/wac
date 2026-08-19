@@ -195,6 +195,7 @@ async function handleMutate(request, env, url) {
     author: authorResult.author,
     previous,
     defaultAsset: hasIndex ? null : effectiveDefault,
+    zipSize: zipBytes.byteLength,
   });
 
   return json({
@@ -205,6 +206,7 @@ async function handleMutate(request, env, url) {
     lastModified: manifest.lastModified,
     default: manifest.default,
     hasIndex: manifest.hasIndex,
+    zipSize: manifest.zipSize,
     files: result.files,
     skipped: result.skipped,
     url: `/${prefix}/`,
