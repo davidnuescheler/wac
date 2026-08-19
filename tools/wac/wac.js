@@ -24,6 +24,8 @@ const ui = {
   previewEmpty: document.getElementById('preview-empty'),
   previewPath: document.getElementById('preview-path'),
   btnOpen: document.getElementById('btn-open'),
+  contentText: document.getElementById('content-text'),
+  contentStatus: document.getElementById('content-status'),
   btnCopyBlock: document.getElementById('btn-copy-block'),
   btnRefresh: document.getElementById('btn-refresh'),
   btnUpload: document.getElementById('btn-upload'),
@@ -60,10 +62,14 @@ let session = null;
 let wacs = [];
 /** @type {string | null} */
 let selectedPath = null;
+/** @type {string | null} */
+let previewBaseUrl = null;
 /** @type {{ files: string[], hasIndex: boolean, bytes: Uint8Array, name?: string } | null} */
 let pendingZip = null;
 let replaceMode = false;
 let dragDepth = 0;
+let contentLoadToken = 0;
+let contentReloadTimer = 0;
 
 /**
  * @returns {{
@@ -342,21 +348,73 @@ function selectWac(path) {
   ui.btnReplace.disabled = !wac;
   ui.btnDelete.disabled = !wac;
   ui.btnOpen.disabled = !wac;
-  ui.btnCopyBlock.disabled = !wac;
-  ui.btnCopyBlock.textContent = 'Copy to block';
+  ui.btnCopyBlock.disabled = true;
+  ui.btnCopyBlock.textContent = 'Copy block';
   renderTree();
+  window.clearTimeout(contentReloadTimer);
+  contentLoadToken += 1;
+  const token = contentLoadToken;
+
   if (!wac) {
+    previewBaseUrl = null;
     ui.preview.classList.add('hidden');
     ui.previewEmpty.classList.remove('hidden');
     ui.previewPath.textContent = 'Select a container to preview';
     ui.preview.removeAttribute('src');
+    ui.contentText.value = '';
+    ui.contentText.disabled = true;
+    ui.contentStatus.textContent = '';
     return;
   }
+
   const url = `${apiBase()}${wac.url}`;
+  previewBaseUrl = url;
   ui.previewPath.textContent = url;
   ui.previewEmpty.classList.add('hidden');
   ui.preview.classList.remove('hidden');
+  ui.contentText.disabled = true;
+  ui.contentText.value = '';
+  ui.contentStatus.textContent = 'Loading…';
+  ui.contentStatus.className = 'status';
   ui.preview.src = url;
+
+  loadWacContentText(wac).then((text) => {
+    if (token !== contentLoadToken) return;
+    ui.contentText.value = text;
+    ui.contentText.disabled = false;
+    ui.btnCopyBlock.disabled = false;
+    ui.contentStatus.textContent = '';
+  }).catch((err) => {
+    if (token !== contentLoadToken) return;
+    ui.contentText.value = '';
+    ui.contentText.disabled = false;
+    ui.btnCopyBlock.disabled = false;
+    ui.contentStatus.textContent = 'Load failed';
+    ui.contentStatus.className = 'status bad';
+    console.error(err);
+  });
+}
+
+/**
+ * @param {string} text
+ */
+function applyContentPreview(text) {
+  if (!previewBaseUrl) return;
+  const trimmed = String(text || '');
+  if (!trimmed.trim()) {
+    ui.preview.src = previewBaseUrl;
+    return;
+  }
+  const next = new URL(previewBaseUrl);
+  next.searchParams.set('content', trimmed);
+  ui.preview.src = next.href;
+}
+
+function scheduleContentPreview() {
+  window.clearTimeout(contentReloadTimer);
+  contentReloadTimer = window.setTimeout(() => {
+    applyContentPreview(ui.contentText.value);
+  }, 350);
 }
 
 async function refreshList() {
@@ -720,40 +778,120 @@ window.addEventListener('drop', async (e) => {
 });
 
 ui.btnOpen.addEventListener('click', () => {
-  const wac = wacs.find((w) => w.path === selectedPath);
-  if (wac) window.open(`${apiBase()}${wac.url}`, '_blank', 'noopener');
+  if (!previewBaseUrl) return;
+  const text = ui.contentText.value;
+  if (text.trim()) {
+    const next = new URL(previewBaseUrl);
+    next.searchParams.set('content', text);
+    window.open(next.href, '_blank', 'noopener');
+    return;
+  }
+  window.open(previewBaseUrl, '_blank', 'noopener');
+});
+
+ui.contentText.addEventListener('input', () => {
+  if (!previewBaseUrl || ui.contentText.disabled) return;
+  ui.contentStatus.textContent = '';
+  ui.contentStatus.className = 'status';
+  scheduleContentPreview();
 });
 
 ui.btnCopyBlock.addEventListener('click', async () => {
-  const wac = wacs.find((w) => w.path === selectedPath);
-  if (!wac) return;
+  if (!previewBaseUrl) return;
   ui.btnCopyBlock.disabled = true;
   ui.btnCopyBlock.textContent = 'Copying…';
   try {
-    const text = await exportWacToBlockText(wac);
-    await navigator.clipboard.writeText(text);
+    const { html, plain } = buildMagicBannerClipboard(ui.contentText.value, previewBaseUrl);
+    await copyRichClipboard(html, plain);
     ui.btnCopyBlock.textContent = 'Copied';
+    ui.contentStatus.textContent = '';
+    ui.contentStatus.className = 'status';
     setTimeout(() => {
-      if (selectedPath === wac.path) {
-        ui.btnCopyBlock.textContent = 'Copy to block';
-        ui.btnCopyBlock.disabled = false;
-      }
+      ui.btnCopyBlock.textContent = 'Copy block';
+      ui.btnCopyBlock.disabled = !previewBaseUrl;
     }, 1200);
   } catch (err) {
     ui.btnCopyBlock.textContent = 'Copy failed';
-    alert(err.message || 'Could not copy text');
-    ui.btnCopyBlock.disabled = false;
+    ui.contentStatus.textContent = err.message || 'Copy failed';
+    ui.contentStatus.className = 'status bad';
+    ui.btnCopyBlock.disabled = !previewBaseUrl;
     setTimeout(() => {
-      if (selectedPath === wac.path) ui.btnCopyBlock.textContent = 'Copy to block';
+      if (ui.btnCopyBlock.textContent === 'Copy failed') {
+        ui.btnCopyBlock.textContent = 'Copy block';
+      }
     }, 1500);
   }
 });
 
+const MAGIC_BANNER_BLOCK = 'magic-banner';
+
 /**
- * Fetch HTML from a WAC and flatten visible text into plain lines for pasting into a block.
+ * Build DA / Google Docs paste payload: single-column block table.
+ * @param {string} content
+ * @param {string} url base WAC URL without ?content=
+ */
+function buildMagicBannerClipboard(content, url) {
+  const bodyText = `${String(content || '').replace(/\s+$/g, '')}\n\n${url}`;
+  const plain = `${MAGIC_BANNER_BLOCK}\n${bodyText}`;
+
+  const linesHtml = String(content || '')
+    .replace(/\s+$/g, '')
+    .split(/\r\n|\r|\n/)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join('');
+  const link = `<p><a href="${escapeAttr(url)}">${escapeHtml(url)}</a></p>`;
+  const cellHtml = `${linesHtml}${link}`;
+
+  // text/html table pastes as a real table in Google Docs and DA.
+  const html = `<table>
+  <thead>
+    <tr><th>${MAGIC_BANNER_BLOCK}</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>${cellHtml}</td></tr>
+  </tbody>
+</table>`;
+
+  return { html, plain };
+}
+
+/**
+ * Put HTML + plain text on the clipboard so Docs/DA keep the table.
+ * @param {string} html
+ * @param {string} plain
+ */
+async function copyRichClipboard(html, plain) {
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    const item = new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' }),
+    });
+    await navigator.clipboard.write([item]);
+    return;
+  }
+
+  // Fallback for environments without ClipboardItem write support.
+  const host = document.createElement('div');
+  host.setAttribute('contenteditable', 'true');
+  host.style.cssText = 'position:fixed;left:-9999px;top:0;';
+  host.innerHTML = html;
+  document.body.appendChild(host);
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const ok = document.execCommand('copy');
+  sel.removeAllRanges();
+  host.remove();
+  if (!ok) throw new Error('Clipboard unavailable');
+}
+
+/**
+ * Fetch HTML from a WAC and flatten visible text into plain lines for the content panel.
  * @param {{ url: string, files?: string[] | null, default?: string | null }} wac
  */
-async function exportWacToBlockText(wac) {
+async function loadWacContentText(wac) {
   const htmlPaths = [];
   const listed = Array.isArray(wac.files) ? wac.files : [];
   for (const file of listed) {

@@ -69,7 +69,6 @@
       <main class="preview">
         <div class="preview-bar">
           <span class="path" id="preview-path">Select a container to preview</span>
-          <button type="button" id="btn-copy-block" disabled>Copy to block</button>
           <button type="button" id="btn-open" disabled>Open ↗</button>
         </div>
         <div class="preview-frame">
@@ -77,6 +76,16 @@
           <iframe id="preview" class="hidden" title="Web Asset Container preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
         </div>
       </main>
+      <aside class="content-panel" aria-label="Content overlay">
+        <div class="content-head">
+          <h2>Content</h2>
+          <div class="content-actions">
+            <span class="status" id="content-status"></span>
+            <button type="button" id="btn-copy-block" disabled>Copy block</button>
+          </div>
+        </div>
+        <textarea id="content-text" spellcheck="false" disabled placeholder="Select a container to edit its text overlay"></textarea>
+      </aside>
     </div>
   </section>
 

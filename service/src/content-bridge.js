@@ -1,7 +1,7 @@
 /**
  * Inject a client script into HTML responses that applies ?content= overlays.
- * Inverse of the manager "Copy to block" export: content p-texts replace
- * WAC leaf text slots in document order.
+ * Inverse of the manager "Copy to block" export: newline-separated plain
+ * text lines replace WAC leaf text slots in document order.
  *
  * Applied once, synchronously, before page scripts so animations see the
  * overlaid text as the initial DOM.
@@ -76,15 +76,14 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       return out;
     }
 
-    function linesFromContent(html) {
-      var wrap = document.createElement('div');
-      wrap.innerHTML = html;
-      var lines = [];
-      wrap.querySelectorAll('p').forEach(function(p) {
-        var t = (p.textContent || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();
-        if (t) lines.push(t);
-      });
-      return lines;
+    function linesFromContent(text) {
+      // Same shape as manager "Copy to block": LF-separated plain lines.
+      // URLSearchParams already decodes %0A to newlines and + to spaces.
+      return String(text || '')
+        .replace(/\\u00a0/g, ' ')
+        .split(/\\r?\\n/)
+        .map(function(l) { return l.replace(/\\s+/g, ' ').trim(); })
+        .filter(Boolean);
     }
 
     var lines = linesFromContent(raw);
