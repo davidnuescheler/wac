@@ -1,10 +1,14 @@
 /**
  * Inject a client script into HTML responses that applies ?content= overlays.
- * Inverse of the manager "Copy to block" export: newline-separated plain
- * text lines replace WAC leaf text slots in document order.
+ * Inverse of the manager content panel: newline-separated plain text lines
+ * replace WAC leaf text slots in document order.
  *
- * Applied once, synchronously, before page scripts so animations see the
- * overlaid text as the initial DOM.
+ * For Design Component pages, also seeds window.__resources so DC skips its
+ * pristine-source refetch of location.href (which would wipe the overlay).
+ *
+ * Applied once, synchronously when possible, before page scripts so animations
+ * see the overlaid text as the initial DOM; defers to DOMContentLoaded when
+ * injected in <head> before <body> exists.
  */
 
 /** Keep in sync with tools/wac/wac.html htmlToPlainLines. */
@@ -26,7 +30,15 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
     var raw = params.get('content');
     if (raw == null || raw === '') return;
 
+    // Design Component runtime re-fetches location.href for a pristine
+    // x-dc template and would wipe DOM overlays. A truthy __resources map
+    // is its bundled/offline signal to skip that refetch. Keep any real map.
+    // Do not write an x-dc start tag in this file — parseDcText matches the
+    // first one in the fetched HTML and would hit a comment here first.
+    if (!window.__resources) window.__resources = {};
+
     var BLOCK = '${BLOCK_SELECTOR}';
+    var applied = false;
 
     function ownText(el) {
       var clone = el.cloneNode(true);
@@ -86,16 +98,33 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
         .filter(Boolean);
     }
 
-    var lines = linesFromContent(raw);
-    if (!lines.length) return;
+    function applyOverlay() {
+      if (applied) return;
+      var root = document.body || document.documentElement;
+      if (!root) return;
 
-    var root = document.body || document.documentElement;
-    if (!root) return;
+      var lines = linesFromContent(raw);
+      if (!lines.length) return;
 
-    var targets = slots(root);
-    var n = Math.min(lines.length, targets.length);
-    for (var i = 0; i < n; i++) setOwnText(targets[i], lines[i]);
-    document.documentElement.setAttribute('data-wac-content-applied', String(n));
+      var targets = slots(root);
+      // Injected before a <head> script: body is not parsed yet. Wait for it.
+      if (!targets.length && document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyOverlay);
+        return;
+      }
+
+      applied = true;
+      var n = Math.min(lines.length, targets.length);
+      for (var i = 0; i < n; i++) setOwnText(targets[i], lines[i]);
+      document.documentElement.setAttribute('data-wac-content-applied', String(n));
+    }
+
+    if (document.body) applyOverlay();
+    else if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', applyOverlay);
+    } else {
+      applyOverlay();
+    }
   } catch (e) {
     try { console.error('[wac-content-bridge]', e); } catch (err) {}
   }

@@ -232,15 +232,12 @@ label {
   background: var(--panel);
   flex-wrap: wrap;
 }
-.preview-bar .path {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--muted);
+.preview-bar #preview-file {
   flex: 1;
   min-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 0.45rem 0.65rem;
 }
 .preview-frame {
   min-height: 0;

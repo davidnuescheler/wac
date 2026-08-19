@@ -22,7 +22,7 @@ const ui = {
   listStatus: document.getElementById('list-status'),
   preview: document.getElementById('preview'),
   previewEmpty: document.getElementById('preview-empty'),
-  previewPath: document.getElementById('preview-path'),
+  previewFile: document.getElementById('preview-file'),
   btnOpen: document.getElementById('btn-open'),
   contentText: document.getElementById('content-text'),
   contentStatus: document.getElementById('content-status'),
@@ -64,6 +64,10 @@ let wacs = [];
 let selectedPath = null;
 /** @type {string | null} */
 let previewBaseUrl = null;
+/** @type {string | null} */
+let originalContentText = null;
+/** @type {string | null} */
+let selectedHtmlFile = null;
 /** @type {{ files: string[], hasIndex: boolean, bytes: Uint8Array, name?: string } | null} */
 let pendingZip = null;
 let replaceMode = false;
@@ -353,39 +357,134 @@ function selectWac(path) {
   renderTree();
   window.clearTimeout(contentReloadTimer);
   contentLoadToken += 1;
-  const token = contentLoadToken;
 
   if (!wac) {
     previewBaseUrl = null;
+    originalContentText = null;
+    selectedHtmlFile = null;
     ui.preview.classList.add('hidden');
     ui.previewEmpty.classList.remove('hidden');
-    ui.previewPath.textContent = 'Select a container to preview';
     ui.preview.removeAttribute('src');
+    resetPreviewFileSelect();
     ui.contentText.value = '';
     ui.contentText.disabled = true;
     ui.contentStatus.textContent = '';
     return;
   }
 
-  const url = `${apiBase()}${wac.url}`;
+  const htmlFiles = htmlFilesForWac(wac);
+  const initial = pickDefaultHtmlFile(wac, htmlFiles);
+  populatePreviewFileSelect(htmlFiles, initial);
+  showPreviewFile(wac, initial);
+}
+
+function resetPreviewFileSelect() {
+  ui.previewFile.disabled = true;
+  ui.previewFile.innerHTML = '';
+  const opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = 'Select a container to preview';
+  ui.previewFile.appendChild(opt);
+}
+
+/**
+ * @param {string[]} htmlFiles
+ * @param {string | null} selected
+ */
+function populatePreviewFileSelect(htmlFiles, selected) {
+  ui.previewFile.innerHTML = '';
+  if (!htmlFiles.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(no .html files listed)';
+    ui.previewFile.appendChild(opt);
+    ui.previewFile.disabled = true;
+    return;
+  }
+  for (const file of htmlFiles) {
+    const opt = document.createElement('option');
+    opt.value = file;
+    opt.textContent = file;
+    ui.previewFile.appendChild(opt);
+  }
+  ui.previewFile.value = selected || htmlFiles[0];
+  ui.previewFile.disabled = false;
+}
+
+/**
+ * @param {{ files?: string[] | null, default?: string | null, hasIndex?: boolean | null }} wac
+ */
+function htmlFilesForWac(wac) {
+  const listed = Array.isArray(wac.files) ? wac.files : [];
+  return listed.filter((f) => /\.html?$/i.test(f)).sort((a, b) => {
+    const rank = (p) => {
+      const lower = p.toLowerCase();
+      if (lower === 'index.html' || lower === 'index.htm') return 0;
+      if (wac.default && p === wac.default) return 1;
+      return 2;
+    };
+    const d = rank(a) - rank(b);
+    return d !== 0 ? d : a.localeCompare(b);
+  });
+}
+
+/**
+ * @param {{ default?: string | null, hasIndex?: boolean | null }} wac
+ * @param {string[]} htmlFiles
+ */
+function pickDefaultHtmlFile(wac, htmlFiles) {
+  if (!htmlFiles.length) return null;
+  const index = htmlFiles.find((f) => {
+    const lower = f.toLowerCase();
+    return lower === 'index.html' || lower === 'index.htm';
+  });
+  if (index) return index;
+  if (wac.default && htmlFiles.includes(wac.default)) return wac.default;
+  return htmlFiles[0];
+}
+
+/**
+ * @param {{ url: string }} wac
+ * @param {string | null} filePath
+ */
+function assetUrl(wac, filePath) {
+  const base = `${apiBase()}${wac.url}`;
+  if (!filePath) return base;
+  const encoded = filePath.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return `${base}${encoded}`;
+}
+
+/**
+ * @param {{ url: string, files?: string[] | null, default?: string | null }} wac
+ * @param {string | null} filePath
+ */
+function showPreviewFile(wac, filePath) {
+  selectedHtmlFile = filePath;
+  const url = assetUrl(wac, filePath);
   previewBaseUrl = url;
-  ui.previewPath.textContent = url;
+  originalContentText = null;
+  contentLoadToken += 1;
+  const token = contentLoadToken;
+
   ui.previewEmpty.classList.add('hidden');
   ui.preview.classList.remove('hidden');
   ui.contentText.disabled = true;
   ui.contentText.value = '';
   ui.contentStatus.textContent = 'Loading…';
   ui.contentStatus.className = 'status';
+  ui.btnCopyBlock.disabled = true;
   ui.preview.src = url;
 
-  loadWacContentText(wac).then((text) => {
+  loadHtmlFileContent(wac, filePath).then((text) => {
     if (token !== contentLoadToken) return;
+    originalContentText = text;
     ui.contentText.value = text;
     ui.contentText.disabled = false;
     ui.btnCopyBlock.disabled = false;
     ui.contentStatus.textContent = '';
   }).catch((err) => {
     if (token !== contentLoadToken) return;
+    originalContentText = '';
     ui.contentText.value = '';
     ui.contentText.disabled = false;
     ui.btnCopyBlock.disabled = false;
@@ -777,10 +876,19 @@ window.addEventListener('drop', async (e) => {
       });
 });
 
+ui.previewFile.addEventListener('change', () => {
+  const wac = wacs.find((w) => w.path === selectedPath);
+  if (!wac) return;
+  const file = ui.previewFile.value || null;
+  window.clearTimeout(contentReloadTimer);
+  showPreviewFile(wac, file);
+});
+
 ui.btnOpen.addEventListener('click', () => {
   if (!previewBaseUrl) return;
   const text = ui.contentText.value;
-  if (text.trim()) {
+  const unchanged = originalContentText != null && text === originalContentText;
+  if (!unchanged && text.trim()) {
     const next = new URL(previewBaseUrl);
     next.searchParams.set('content', text);
     window.open(next.href, '_blank', 'noopener');
@@ -801,7 +909,12 @@ ui.btnCopyBlock.addEventListener('click', async () => {
   ui.btnCopyBlock.disabled = true;
   ui.btnCopyBlock.textContent = 'Copying…';
   try {
-    const { html, plain } = buildMagicBannerClipboard(ui.contentText.value, previewBaseUrl);
+    const current = ui.contentText.value;
+    const unchanged = originalContentText != null && current === originalContentText;
+    const { html, plain } = buildMagicBannerClipboard(
+      unchanged ? '' : current,
+      previewBaseUrl,
+    );
     await copyRichClipboard(html, plain);
     ui.btnCopyBlock.textContent = 'Copied';
     ui.contentStatus.textContent = '';
@@ -831,14 +944,13 @@ const MAGIC_BANNER_BLOCK = 'magic-banner';
  * @param {string} url base WAC URL without ?content=
  */
 function buildMagicBannerClipboard(content, url) {
-  const bodyText = `${String(content || '').replace(/\s+$/g, '')}\n\n${url}`;
+  const text = String(content || '').replace(/\s+$/g, '');
+  const bodyText = text ? `${text}\n\n${url}` : url;
   const plain = `${MAGIC_BANNER_BLOCK}\n${bodyText}`;
 
-  const linesHtml = String(content || '')
-    .replace(/\s+$/g, '')
-    .split(/\r\n|\r|\n/)
-    .map((line) => `<p>${escapeHtml(line)}</p>`)
-    .join('');
+  const linesHtml = text
+    ? text.split(/\r\n|\r|\n/).map((line) => `<p>${escapeHtml(line)}</p>`).join('')
+    : '';
   const link = `<p><a href="${escapeAttr(url)}">${escapeHtml(url)}</a></p>`;
   const cellHtml = `${linesHtml}${link}`;
 
@@ -888,39 +1000,13 @@ async function copyRichClipboard(html, plain) {
 }
 
 /**
- * Fetch HTML from a WAC and flatten visible text into plain lines for the content panel.
- * @param {{ url: string, files?: string[] | null, default?: string | null }} wac
+ * Fetch one HTML file from a WAC and flatten visible text into plain lines.
+ * @param {{ url: string }} wac
+ * @param {string | null} filePath
  */
-async function loadWacContentText(wac) {
-  const htmlPaths = [];
-  const listed = Array.isArray(wac.files) ? wac.files : [];
-  for (const file of listed) {
-    if (/\.html?$/i.test(file)) htmlPaths.push(file);
-  }
-  if (!htmlPaths.length) {
-    const rootHtml = await fetchHtml(`${apiBase()}${wac.url}`);
-    return htmlToPlainLines(rootHtml).join('\n');
-  }
-
-  htmlPaths.sort((a, b) => {
-    const rank = (p) => {
-      const lower = p.toLowerCase();
-      if (lower === 'index.html' || lower === 'index.htm') return 0;
-      if (wac.default && p === wac.default) return 1;
-      return 2;
-    };
-    const d = rank(a) - rank(b);
-    return d !== 0 ? d : a.localeCompare(b);
-  });
-
-  const lineSets = [];
-  for (const path of htmlPaths) {
-    // eslint-disable-next-line no-await-in-loop
-    const html = await fetchHtml(`${apiBase()}${wac.url}${path}`);
-    const lines = htmlToPlainLines(html);
-    if (lines.length) lineSets.push(lines);
-  }
-  return lineSets.map((lines) => lines.join('\n')).join('\n\n');
+async function loadHtmlFileContent(wac, filePath) {
+  const html = await fetchHtml(assetUrl(wac, filePath));
+  return htmlToPlainLines(html).join('\n');
 }
 
 async function fetchHtml(url) {
