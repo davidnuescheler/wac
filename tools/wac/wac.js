@@ -63,6 +63,8 @@ let wacs = [];
 /** @type {string | null} */
 let selectedPath = null;
 /** @type {string | null} */
+let pendingDeepLinkPath = null;
+/** @type {string | null} */
 let previewBaseUrl = null;
 /** @type {string | null} */
 let originalContentText = null;
@@ -209,13 +211,89 @@ function resolveOrgSite() {
 
 function fillSigninForm() {
   const store = loadStore();
+  const deep = readDeepLink();
   ui.email.value = store.email || '';
   ui.token.value = store.token || '';
   ui.org.value = '';
   ui.site.value = '';
+
+  if (deep.org && deep.site) {
+    const key = siteKey(deep.org, deep.site);
+    const known = store.sites.some((s) => siteKey(s.org, s.site) === key);
+    if (known) {
+      renderSiteSelect(key);
+    } else {
+      renderSiteSelect(ADD_NEW);
+      ui.org.value = deep.org;
+      ui.site.value = deep.site;
+      syncNewSiteFields();
+    }
+    return;
+  }
+
   renderSiteSelect(
     store.lastOrg && store.lastSite ? siteKey(store.lastOrg, store.lastSite) : '',
   );
+}
+
+/**
+ * @returns {{ org: string, site: string, path: string | null }}
+ */
+function readDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const org = (params.get('org') || '').trim();
+  const site = (params.get('site') || '').trim();
+  const path = (params.get('path') || '').trim().replace(/^\/+|\/+$/g, '');
+  return { org, site, path: path || null };
+}
+
+/**
+ * @param {{ org?: string, site?: string, path?: string | null }} parts
+ * @param {{ replace?: boolean }} [opts]
+ */
+function writeDeepLink(parts, opts = {}) {
+  const url = new URL(location.href);
+  const org = (parts.org || '').trim();
+  const site = (parts.site || '').trim();
+  const path = (parts.path || '').trim().replace(/^\/+|\/+$/g, '');
+
+  if (org) url.searchParams.set('org', org);
+  else url.searchParams.delete('org');
+  if (site) url.searchParams.set('site', site);
+  else url.searchParams.delete('site');
+  if (path) url.searchParams.set('path', path);
+  else url.searchParams.delete('path');
+
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const cur = `${location.pathname}${location.search}${location.hash}`;
+  if (next === cur) return;
+  if (opts.replace) history.replaceState({ org, site, path }, '', next);
+  else history.pushState({ org, site, path }, '', next);
+}
+
+/**
+ * Keep the URL in sync with the signed-in org/site and selected container.
+ * @param {{ replace?: boolean }} [opts]
+ */
+function syncDeepLink(opts = {}) {
+  if (!session) return;
+  writeDeepLink({
+    org: session.org,
+    site: session.site,
+    path: selectedPath,
+  }, opts);
+}
+
+/**
+ * Apply path from the URL once the container list is available.
+ */
+function applyPendingDeepLinkPath() {
+  const path = pendingDeepLinkPath;
+  pendingDeepLinkPath = null;
+  if (!path) return;
+  if (wacs.some((w) => w.path === path)) {
+    selectWac(path, { syncUrl: true, replaceUrl: true });
+  }
 }
 
 function apiBase() {
@@ -256,13 +334,18 @@ function showApp() {
 }
 
 function showSignin({ clearCredentials = false } = {}) {
+  const deep = readDeepLink();
+  const org = session?.org || deep.org;
+  const site = session?.site || deep.site;
   ui.app.classList.add('hidden');
   ui.signin.classList.remove('hidden');
   session = null;
   wacs = [];
   selectedPath = null;
+  pendingDeepLinkPath = null;
   ui.signinError.textContent = '';
   if (clearCredentials) clearAuth();
+  writeDeepLink({ org, site, path: null }, { replace: true });
   fillSigninForm();
 }
 
@@ -280,7 +363,11 @@ async function signInWith({ email, token, org, site }) {
   await api(`/${session.org}/${session.site}/index.json`);
   rememberAuthAndSite({ email, token, org, site });
   showApp();
+  const deep = readDeepLink();
+  if (!pendingDeepLinkPath && deep.path) pendingDeepLinkPath = deep.path;
+  syncDeepLink({ replace: true });
   await refreshList();
+  applyPendingDeepLinkPath();
 }
 
 function buildTree(items) {
@@ -346,7 +433,7 @@ function wacButton(wac) {
   return btn;
 }
 
-function selectWac(path) {
+function selectWac(path, { syncUrl = true, replaceUrl = false } = {}) {
   selectedPath = path;
   const wac = wacs.find((w) => w.path === path);
   ui.btnReplace.disabled = !wac;
@@ -369,6 +456,7 @@ function selectWac(path) {
     ui.contentText.value = '';
     ui.contentText.disabled = true;
     ui.contentStatus.textContent = '';
+    if (syncUrl) syncDeepLink({ replace: replaceUrl });
     return;
   }
 
@@ -376,6 +464,7 @@ function selectWac(path) {
   const initial = pickDefaultHtmlFile(wac, htmlFiles);
   populatePreviewFileSelect(htmlFiles, initial);
   showPreviewFile(wac, initial);
+  if (syncUrl) syncDeepLink({ replace: replaceUrl });
 }
 
 function resetPreviewFileSelect() {
@@ -524,10 +613,10 @@ async function refreshList() {
     ui.listStatus.textContent = `${data.count || 0} container${(data.count || 0) === 1 ? '' : 's'}`;
     if (selectedPath && !wacs.some((w) => w.path === selectedPath)) {
       selectedPath = null;
-      selectWac(null);
+      selectWac(null, { syncUrl: true, replaceUrl: true });
     }
     renderTree();
-    if (selectedPath) selectWac(selectedPath);
+    if (selectedPath) selectWac(selectedPath, { syncUrl: false });
   } catch (err) {
     ui.listStatus.textContent = 'Failed';
     ui.listStatus.classList.add('bad');
@@ -790,6 +879,35 @@ ui.btnSignout.addEventListener('click', () => {
 
 ui.btnSwitchSite.addEventListener('click', () => {
   showSignin({ clearCredentials: false });
+});
+
+window.addEventListener('popstate', () => {
+  const deep = readDeepLink();
+  if (!session) {
+    pendingDeepLinkPath = deep.path;
+    fillSigninForm();
+    return;
+  }
+
+  if (deep.org && deep.site
+    && (deep.org !== session.org || deep.site !== session.site)) {
+    pendingDeepLinkPath = deep.path;
+    signInWith({
+      email: session.email,
+      token: session.token,
+      org: deep.org,
+      site: deep.site,
+    }).catch(() => {
+      showSignin({ clearCredentials: false });
+    });
+    return;
+  }
+
+  if (deep.path && wacs.some((w) => w.path === deep.path)) {
+    selectWac(deep.path, { syncUrl: false });
+  } else {
+    selectWac(null, { syncUrl: false });
+  }
 });
 
 ui.btnRefresh.addEventListener('click', () => {
@@ -1116,14 +1234,18 @@ ui.uploadForm.addEventListener('submit', async (e) => {
 });
 
 // Boot
+const bootLink = readDeepLink();
+pendingDeepLinkPath = bootLink.path;
 fillSigninForm();
 const store = loadStore();
-if (store.email && store.token && store.lastOrg && store.lastSite) {
+const bootOrg = bootLink.org || store.lastOrg;
+const bootSite = bootLink.site || store.lastSite;
+if (store.email && store.token && bootOrg && bootSite) {
   signInWith({
     email: store.email,
     token: store.token,
-    org: store.lastOrg,
-    site: store.lastSite,
+    org: bootOrg,
+    site: bootSite,
   }).catch(() => {
     showSignin({ clearCredentials: false });
   });

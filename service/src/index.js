@@ -83,7 +83,7 @@ async function handleMutate(request, env, url) {
     }, 400);
   }
 
-  const auth = authorizeUpload(request, env, target);
+  const auth = await authorizeUpload(request, env, target);
   if (!auth.ok) {
     return json({ error: auth.error }, auth.status);
   }
@@ -219,7 +219,7 @@ async function handleMutate(request, env, url) {
  * @param {{ org: string, site: string }} site
  */
 async function handleSiteIndex(request, env, site) {
-  const auth = authorizeUpload(request, env, site);
+  const auth = await authorizeUpload(request, env, site);
   if (!auth.ok) {
     return json({ error: auth.error }, auth.status);
   }
@@ -266,7 +266,7 @@ function json(body, status = 200) {
 /**
  * @typedef {{
  *   WAC_BUCKET: R2Bucket,
- *   WAC_UPLOAD_KEYS?: string,
+ *   WAC_KEYS?: KVNamespace,
  *   MAX_ZIP_BYTES?: string,
  * }} Env
  */

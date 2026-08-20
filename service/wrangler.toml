@@ -12,12 +12,12 @@ binding = "WAC_BUCKET"
 bucket_name = "wac"
 preview_bucket_name = "wac"
 
-# Dev upload keys live in `.dev.vars` (see `.dev.vars.example`).
-# Production secrets:
-#   wrangler secret put WAC_UPLOAD_KEYS
-# Value shape (JSON):
-#   {"*":"global-dev-key","acme/docs":"site-specific-key"}
+# Upload-key digests live in KV (not git). One key per scope → SHA-256 hex.
+#   npx wrangler kv key put --binding WAC_KEYS "org/site" "<sha256-hex>"
+[[kv_namespaces]]
+binding = "WAC_KEYS"
+id = "eb0e678ddc1948928a23b8ad88c5fbc3"
+preview_id = "4ec67669f7604cffab7c792b08916b15"
 
 [vars]
-# Optional public config (non-secret). Secrets go in .dev.vars / wrangler secret.
 MAX_ZIP_BYTES = "52428800"

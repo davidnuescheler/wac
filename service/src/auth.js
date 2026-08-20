@@ -1,23 +1,28 @@
 /**
- * Upload auth via Bearer / X-WAC-Key against WAC_UPLOAD_KEYS JSON.
+ * Upload auth via Bearer / X-WAC-Key against SHA-256 digests in KV.
  *
- * Example .dev.vars / secret value:
- *   WAC_UPLOAD_KEYS={"*":"dev-key","acme/docs":"site-key","acme/docs/preview":"path-key"}
+ * Binding: env.WAC_KEYS
+ * Each KV key is a scope string; value is the SHA-256 hex digest of the token.
  *
  * Lookup order (first match wins):
  *   1. org/site/wacPath
  *   2. org/site
  *   3. org
  *   4. *
+ *
+ * Add / rotate (not in git):
+ *   node -e "console.log(require('crypto').createHash('sha256').update('TOKEN').digest('hex'))"
+ *   npx wrangler kv key put --binding WAC_KEYS --preview false --remote "adobecom/wac-demo" "<sha256-hex>"
+ *   npx wrangler kv key put --binding WAC_KEYS --preview --remote "adobecom/wac-demo" "<sha256-hex>"
  */
 
 /**
  * @param {Request} request
- * @param {{ WAC_UPLOAD_KEYS?: string }} env
+ * @param {{ WAC_KEYS?: KVNamespace }} env
  * @param {{ org: string, site: string, wacPath?: string }} target
- * @returns {{ ok: true } | { ok: false, error: string, status: number }}
+ * @returns {Promise<{ ok: true } | { ok: false, error: string, status: number }>}
  */
-export function authorizeUpload(request, env, target) {
+export async function authorizeUpload(request, env, target) {
   const presented = getPresentedKey(request);
   if (!presented) {
     return {
@@ -27,8 +32,7 @@ export function authorizeUpload(request, env, target) {
     };
   }
 
-  const keys = parseUploadKeys(env.WAC_UPLOAD_KEYS);
-  if (!keys) {
+  if (!env.WAC_KEYS) {
     return {
       ok: false,
       status: 503,
@@ -36,17 +40,32 @@ export function authorizeUpload(request, env, target) {
     };
   }
 
+  const presentedHash = await sha256Hex(presented);
+
   const candidates = [];
   if (target.wacPath) {
     candidates.push(`${target.org}/${target.site}/${target.wacPath}`);
   }
   candidates.push(`${target.org}/${target.site}`, target.org, '*');
 
+  let sawAny = false;
   for (const scope of candidates) {
-    const expected = keys[scope];
-    if (expected && timingSafeEqual(presented, expected)) {
+    // eslint-disable-next-line no-await-in-loop
+    const expected = await env.WAC_KEYS.get(scope);
+    if (!expected) continue;
+    sawAny = true;
+    if (timingSafeEqual(presentedHash, expected.trim())) {
       return { ok: true };
     }
+  }
+
+  if (!sawAny) {
+    // No digests configured for this site tree at all.
+    return {
+      ok: false,
+      status: 503,
+      error: 'upload_keys_not_configured',
+    };
   }
 
   return {
@@ -71,18 +90,16 @@ function getPresentedKey(request) {
 }
 
 /**
- * @param {string | undefined} raw
- * @returns {Record<string, string> | null}
+ * @param {string} value
  */
-function parseUploadKeys(raw) {
-  if (!raw || !raw.trim()) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return /** @type {Record<string, string>} */ (parsed);
-  } catch {
-    return null;
-  }
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**

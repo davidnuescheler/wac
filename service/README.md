@@ -64,16 +64,22 @@ Do these once on the account you use with Wrangler:
 
 4. **Set `account_id` in `wrangler.toml`** from `wrangler whoami` output.
 
-5. **Set the upload-key secret for production**
-   ```bash
-   npx wrangler secret put WAC_UPLOAD_KEYS
-   ```
-   Paste JSON, for example:
-   ```json
-   {"*":"replace-me","goodness/demo":"site-specific-key"}
-   ```
-   Lookup order for a request to `/org/site/path.wac`:
+5. **Upload keys** are SHA-256 hex digests stored in the `WAC_KEYS` KV namespace
+   (not in git). One KV key per scope (`org/site`, `*`, …).
+   Lookup order for `/org/site/path.wac`:
    `org/site/path` → `org/site` → `org` → `*`.
+
+   ```bash
+   # hash a token
+   node -e "console.log(require('crypto').createHash('sha256').update('TOKEN').digest('hex'))"
+
+   # store / rotate one site (production + preview)
+   npx wrangler kv key put --binding WAC_KEYS --preview false --remote "adobecom/wac-demo" "<sha256-hex>"
+   npx wrangler kv key put --binding WAC_KEYS --preview --remote "adobecom/wac-demo" "<sha256-hex>"
+
+   # remove a site
+   npx wrangler kv key delete --binding WAC_KEYS --preview false --remote "adobecom/wac-demo"
+   ```
 
 6. **Deploy**
    ```bash
@@ -89,11 +95,11 @@ the Worker sends CORS headers itself.
 ```bash
 cd service
 npm install
-cp .dev.vars.example .dev.vars   # edit keys as needed
 npm run dev
 ```
 
-`.dev.vars` is gitignored. Production uses `wrangler secret`, not committed files.
+`wrangler dev` uses the KV `preview_id` namespace. Put preview digests with
+`--preview` as shown above.
 
 ## Auth header
 
