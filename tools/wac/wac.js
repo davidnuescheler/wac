@@ -218,22 +218,34 @@ function fillSigninForm() {
   ui.site.value = '';
 
   if (deep.org && deep.site) {
-    const key = siteKey(deep.org, deep.site);
-    const known = store.sites.some((s) => siteKey(s.org, s.site) === key);
-    if (known) {
-      renderSiteSelect(key);
-    } else {
-      renderSiteSelect(ADD_NEW);
-      ui.org.value = deep.org;
-      ui.site.value = deep.site;
-      syncNewSiteFields();
-    }
+    ensureSiteInStore(deep.org, deep.site);
+    renderSiteSelect(siteKey(deep.org, deep.site));
     return;
   }
 
   renderSiteSelect(
     store.lastOrg && store.lastSite ? siteKey(store.lastOrg, store.lastSite) : '',
   );
+}
+
+/**
+ * Ensure org/site appears in the sign-in site list (e.g. from deep-link query params).
+ * @param {string} org
+ * @param {string} site
+ */
+function ensureSiteInStore(org, site) {
+  const store = loadStore();
+  const key = siteKey(org, site);
+  const known = store.sites.some((s) => siteKey(s.org, s.site) === key);
+  if (!known) {
+    store.sites = [
+      { org, site, lastUsed: new Date().toISOString() },
+      ...store.sites,
+    ].slice(0, 20);
+  }
+  store.lastOrg = org;
+  store.lastSite = site;
+  saveStore(store);
 }
 
 /**
