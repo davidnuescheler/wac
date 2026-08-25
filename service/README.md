@@ -12,6 +12,7 @@ environment.
 | `DELETE` | `/<org>/<site>/<wac-path>.wac` | Bearer / `X-WAC-Key` | Remove container objects |
 | `GET` | `/<org>/<site>/index.json` | Bearer / `X-WAC-Key` | List WACs for the site |
 | `GET` / `HEAD` | `/<org>/<site>/<wac-path>/...` | none | Serve extracted assets |
+| `GET` / `HEAD` | `/tools/*` | none | Proxy to AEM EDS (`main--wac--davidnuescheler.aem.live`) |
 | `OPTIONS` | any | none | CORS preflight |
 
 Examples:
@@ -129,6 +130,9 @@ container root then respond with **301** to that file.
 
 ### Manager UI
 
-Open `/tools/wac/wac.html` on this site (or open the file locally). Sign in with
-email + shared token against an org/site, then browse, preview, upload, replace,
-or delete containers.
+The worker proxies `/tools/*` to the AEM EDS origin
+(`https://main--wac--davidnuescheler.aem.live/`), using the same request
+rewriting as the [AEM Cloudflare production worker](https://github.com/adobe/aem-cloudflare-prod-worker).
+Open `/tools/wac/wac.html` on the worker (or on this site). Sign in with email +
+shared token against an org/site, then browse, preview, upload, replace, or
+delete containers.
