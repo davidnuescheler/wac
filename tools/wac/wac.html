@@ -3,18 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Web Asset Container Manager</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <title>Web Asset Container</title>
+  <link rel="icon" href="logo.png">
+  <link rel="stylesheet" href="s2-tokens.css">
   <link rel="stylesheet" href="wac.css">
 </head>
 <body>
   <section id="signin">
     <form class="signin-card" id="signin-form">
-      <div>
-        <h1>Web Asset Container Manager</h1>
-        <p>Sign in with your email and shared site token. Pick a recent site or add a new one.</p>
+      <div class="signin-brand">
+        <img src="logo.png" alt="" width="32" height="32">
+        <div>
+          <h1>Web Asset Container</h1>
+          <p>Sign in with your email and shared site token. Pick a recent site or add a new one.</p>
+        </div>
       </div>
       <label>Email
         <input id="email" name="email" type="email" required autocomplete="username" placeholder="you@example.com">
@@ -44,12 +46,21 @@
   <section id="app" class="hidden">
     <header class="topbar">
       <div class="brand">
-        <strong>Web Asset Container</strong>
-        <span id="session-label"></span>
+        <img class="brand-logo" src="logo.png" alt="" width="20" height="20">
+        <span id="nav-org" class="nav-pill"></span>
+        <span class="nav-sep" aria-hidden="true">/</span>
+        <span id="nav-site" class="nav-pill"></span>
+        <span id="session-email" class="nav-branch"></span>
       </div>
       <div class="top-actions">
-        <button type="button" id="btn-refresh">Refresh</button>
-        <button type="button" id="btn-upload" class="primary">Upload</button>
+        <button type="button" id="btn-refresh">
+          <span class="s2-icon s2-icon-refresh" aria-hidden="true"></span>
+          Refresh
+        </button>
+        <button type="button" id="btn-upload" class="primary">
+          <span class="s2-icon s2-icon-upload-cloud" aria-hidden="true"></span>
+          Upload
+        </button>
         <button type="button" id="btn-switch-site">Switch site</button>
         <button type="button" id="btn-signout">Sign out</button>
       </div>
@@ -62,8 +73,14 @@
         </div>
         <div class="tree" id="tree"></div>
         <div class="side-foot">
-          <button type="button" id="btn-replace" disabled>Replace selected</button>
-          <button type="button" id="btn-delete" class="danger" disabled>Delete selected</button>
+          <button type="button" id="btn-replace" disabled>
+            <span class="s2-icon s2-icon-upload" aria-hidden="true"></span>
+            Replace selected
+          </button>
+          <button type="button" id="btn-delete" class="danger" disabled>
+            <span class="s2-icon s2-icon-delete" aria-hidden="true"></span>
+            Delete selected
+          </button>
         </div>
       </aside>
       <main class="preview">
@@ -74,7 +91,7 @@
           <button type="button" id="btn-open" disabled>Open ↗</button>
         </div>
         <div class="preview-frame">
-          <div class="preview-empty" id="preview-empty">No container selected</div>
+          <div class="preview-empty" id="preview-empty">Select a container from the list.</div>
           <iframe id="preview" class="hidden" title="Web Asset Container preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
         </div>
       </main>
@@ -93,9 +110,15 @@
 
   <div id="upload-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="upload-title">
     <form class="modal" id="upload-form">
-      <h3 id="upload-title">Upload</h3>
+      <div class="modal-head">
+        <h3 id="upload-title">Upload</h3>
+        <button type="button" id="upload-cancel" class="icon-btn" aria-label="Close">
+          <span class="s2-icon s2-icon-close" aria-hidden="true"></span>
+        </button>
+      </div>
       <div class="intent hidden" id="upload-intent" aria-live="polite"></div>
       <div class="dropzone" id="dropzone" tabindex="0">
+        <span class="s2-icon s2-icon-upload-cloud dropzone-icon" aria-hidden="true"></span>
         <p class="dropzone-title" id="dropzone-title">Drop a .zip here</p>
         <p class="dropzone-sub" id="dropzone-sub">or click to choose</p>
         <p class="dropzone-file hidden" id="dropzone-file"></p>
@@ -116,7 +139,7 @@
       </div>
       <div class="status" id="upload-status"></div>
       <div class="actions">
-        <button type="button" id="upload-cancel">Cancel</button>
+        <button type="button" id="upload-dismiss">Cancel</button>
         <button class="primary" type="submit" id="upload-submit">Upload</button>
       </div>
     </form>
@@ -124,6 +147,7 @@
 
   <div id="page-drop" class="page-drop" aria-hidden="true">
     <div>
+      <span class="s2-icon s2-icon-upload-cloud page-drop-icon" aria-hidden="true"></span>
       <h2 id="page-drop-title">Drop zip to upload</h2>
       <p id="page-drop-sub"></p>
     </div>

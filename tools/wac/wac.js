@@ -17,7 +17,9 @@ const ui = {
   org: document.getElementById('org'),
   site: document.getElementById('site'),
   app: document.getElementById('app'),
-  sessionLabel: document.getElementById('session-label'),
+  navOrg: document.getElementById('nav-org'),
+  navSite: document.getElementById('nav-site'),
+  sessionEmail: document.getElementById('session-email'),
   tree: document.getElementById('tree'),
   listStatus: document.getElementById('list-status'),
   preview: document.getElementById('preview'),
@@ -50,6 +52,7 @@ const ui = {
   fileList: document.getElementById('file-list'),
   uploadStatus: document.getElementById('upload-status'),
   uploadCancel: document.getElementById('upload-cancel'),
+  uploadDismiss: document.getElementById('upload-dismiss'),
   uploadSubmit: document.getElementById('upload-submit'),
   pageDrop: document.getElementById('page-drop'),
   pageDropTitle: document.getElementById('page-drop-title'),
@@ -342,7 +345,9 @@ async function api(path, options = {}) {
 function showApp() {
   ui.signin.classList.add('hidden');
   ui.app.classList.remove('hidden');
-  ui.sessionLabel.textContent = `${session.email} · /${session.org}/${session.site}`;
+  ui.navOrg.textContent = session.org;
+  ui.navSite.textContent = session.site;
+  ui.sessionEmail.textContent = session.email;
 }
 
 function showSignin({ clearCredentials = false } = {}) {
@@ -398,30 +403,58 @@ function buildTree(items) {
   return root;
 }
 
+function collectOpenFolders() {
+  return new Set(
+    [...ui.tree.querySelectorAll('details[open][data-path]')]
+      .map((el) => el.dataset.path),
+  );
+}
+
+function ancestorFolderPaths(wacPath) {
+  const parts = String(wacPath || '').split('/').filter(Boolean);
+  const paths = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    paths.push(parts.slice(0, i).join('/'));
+  }
+  return paths;
+}
+
 function renderTree() {
+  const opened = collectOpenFolders();
+  if (selectedPath) {
+    ancestorFolderPaths(selectedPath).forEach((path) => opened.add(path));
+  }
+
   ui.tree.innerHTML = '';
   if (!wacs.length) {
-        ui.tree.innerHTML = '<div class="tree-empty">No Web Asset Containers yet. Upload a zip to create one.</div>';
+    ui.tree.innerHTML = '<div class="tree-empty">No Web Asset Containers yet. Upload a zip to create one.</div>';
     return;
   }
 
   const root = buildTree(wacs);
 
-  function renderNode(node, container) {
+  function renderNode(node, container, prefix = '', depth = 0) {
     const entries = [...node.children.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     for (const [, child] of entries) {
+      const path = prefix ? `${prefix}/${child.name}` : child.name;
       if (child.wac && child.children.size === 0) {
-        container.appendChild(wacButton(child.wac));
+        container.appendChild(wacButton(child.wac, depth));
         continue;
       }
       const details = document.createElement('details');
-      details.open = true;
+      details.dataset.path = path;
+      details.open = opened.has(path);
       const summary = document.createElement('summary');
-      summary.textContent = child.name;
+      summary.className = 'tree-row';
+      const name = document.createElement('span');
+      name.className = 'tree-label';
+      name.textContent = child.name;
+      summary.append(treeRowBody(depth, s2Icon('chevron'), s2Icon('folder'), name));
       details.appendChild(summary);
-      if (child.wac) details.appendChild(wacButton(child.wac));
+      if (child.wac) details.appendChild(wacButton(child.wac, depth + 1));
       const nested = document.createElement('div');
-      renderNode(child, nested);
+      nested.className = 'tree-group';
+      renderNode(child, nested, path, depth + 1);
       details.appendChild(nested);
       container.appendChild(details);
     }
@@ -430,17 +463,40 @@ function renderTree() {
   renderNode(root, ui.tree);
 }
 
-function wacButton(wac) {
+function s2Icon(name) {
+  const el = document.createElement('span');
+  el.className = `s2-icon s2-icon-${name}`;
+  el.setAttribute('aria-hidden', 'true');
+  return el;
+}
+
+function chevronSpacer() {
+  const el = document.createElement('span');
+  el.className = 'tree-chevron-spacer';
+  el.setAttribute('aria-hidden', 'true');
+  return el;
+}
+
+function treeRowBody(depth, ...children) {
+  const body = document.createElement('span');
+  body.className = 'tree-row-body';
+  body.style.setProperty('--depth', String(depth));
+  body.append(...children);
+  return body;
+}
+
+function wacButton(wac, depth = 0) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = `wac-item${selectedPath === wac.path ? ' active' : ''}`;
+  btn.className = `wac-item tree-row${selectedPath === wac.path ? ' active' : ''}`;
   btn.dataset.path = wac.path;
   const label = document.createElement('span');
+  label.className = 'tree-label';
   label.textContent = wac.path.split('/').pop();
   const meta = document.createElement('span');
   meta.className = 'meta';
   meta.textContent = Number.isFinite(wac.zipSize) ? formatBytes(wac.zipSize) : '';
-  btn.append(label, meta);
+  btn.append(treeRowBody(depth, chevronSpacer(), s2Icon('file'), label, meta));
   btn.addEventListener('click', () => selectWac(wac.path));
   return btn;
 }
@@ -931,6 +987,7 @@ ui.btnRefresh.addEventListener('click', () => {
 ui.btnUpload.addEventListener('click', () => openUploadModal({ replace: false }));
 ui.btnReplace.addEventListener('click', () => openUploadModal({ replace: true }));
 ui.uploadCancel.addEventListener('click', closeUploadModal);
+ui.uploadDismiss.addEventListener('click', closeUploadModal);
 ui.modal.addEventListener('click', (e) => {
   if (e.target === ui.modal) closeUploadModal();
 });
