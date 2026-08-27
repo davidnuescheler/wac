@@ -4,16 +4,15 @@
  * Upload:  POST /<org>/<site>/<wac-path>.wac   (auth required, CORS)
  * Delete:  DELETE /<org>/<site>/<wac-path>.wac (auth required, CORS)
  * List:    GET  /<org>/<site>/index.json       (auth required, CORS)
- * Serve:   GET  /<org>/<site>/<wac-path>/...   (public, CORS)
- * Tools:   *    /tools/*                       (proxy to AEM EDS origin)
+ * Serve:   GET  /<org>/<site>/<wac-path>/...   (X-Forwarded-Host required, CORS)
  */
 
 import { handleOptions, withCors } from './cors.js';
 import { authorizeUpload } from './auth.js';
+import { authorizeAssetDelivery } from './xfh.js';
 import { parseAuthor } from './author.js';
 import { parseUploadTarget, parseServeTarget, parseSiteIndexTarget } from './paths.js';
 import { extractZipToPrefix, analyzeZip } from './unzip.js';
-import { isToolsPath, proxyToAemLive } from './eds-proxy.js';
 import {
   serveFromR2,
   deletePrefix,
@@ -32,10 +31,6 @@ export default {
     try {
       const url = new URL(request.url);
 
-      if (isToolsPath(url.pathname)) {
-        return proxyToAemLive(request, env);
-      }
-
       if (request.method === 'OPTIONS') {
         return handleOptions(request);
       }
@@ -47,8 +42,7 @@ export default {
             upload: 'POST /<org>/<site>/<wac-path>.wac  (Authorization: Bearer <key>, optional X-WAC-Author, body: zip)',
             delete: 'DELETE /<org>/<site>/<wac-path>.wac  (Authorization: Bearer <key>)',
             list: 'GET /<org>/<site>/index.json  (Authorization: Bearer <key>)',
-            serve: 'GET /<org>/<site>/<wac-path>/[...path]',
-            tools: 'GET /tools/*  (proxied from AEM EDS origin)',
+            serve: 'GET /<org>/<site>/<wac-path>/[...path]  (requires X-Forwarded-Host: <branch>--<site>--<org>.aem.network)',
           },
         }), request);
       }
@@ -256,6 +250,14 @@ async function handleServe(request, env, url) {
     }, 400);
   }
 
+  const xfh = authorizeAssetDelivery(request, target);
+  if (!xfh.ok) {
+    return json({
+      error: xfh.error,
+      message: 'Asset delivery requires X-Forwarded-Host: <branch>--<site>--<org>.aem.network matching the path',
+    }, xfh.status);
+  }
+
   return serveFromR2(env.WAC_BUCKET, target, request.method === 'HEAD', url);
 }
 
@@ -275,8 +277,5 @@ function json(body, status = 200) {
  *   WAC_BUCKET: R2Bucket,
  *   WAC_KEYS?: KVNamespace,
  *   MAX_ZIP_BYTES?: string,
- *   ORIGIN_HOSTNAME?: string,
- *   PUSH_INVALIDATION?: string,
- *   ORIGIN_AUTHENTICATION?: string,
  * }} Env
  */

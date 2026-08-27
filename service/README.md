@@ -11,8 +11,7 @@ environment.
 | `POST` | `/<org>/<site>/<wac-path>.wac` | Bearer / `X-WAC-Key` | Upload + extract zip |
 | `DELETE` | `/<org>/<site>/<wac-path>.wac` | Bearer / `X-WAC-Key` | Remove container objects |
 | `GET` | `/<org>/<site>/index.json` | Bearer / `X-WAC-Key` | List WACs for the site |
-| `GET` / `HEAD` | `/<org>/<site>/<wac-path>/...` | none | Serve extracted assets |
-| `GET` / `HEAD` | `/tools/*` | none | Proxy to AEM EDS (`main--wac--davidnuescheler.aem.live`) |
+| `GET` / `HEAD` | `/<org>/<site>/<wac-path>/...` | `X-Forwarded-Host` | Serve extracted assets |
 | `OPTIONS` | any | none | CORS preflight |
 
 Examples:
@@ -29,9 +28,11 @@ curl -X POST "http://127.0.0.1:8787/goodness/demo/hello.wac" \
 curl "http://127.0.0.1:8787/goodness/demo/index.json" \
   -H "Authorization: Bearer dev-upload-key"
 
-# Consume (no auth, CORS open)
-curl "http://127.0.0.1:8787/goodness/demo/hello/"
-curl "http://127.0.0.1:8787/goodness/demo/hello/styles.css"
+# Consume (requires X-Forwarded-Host matching org/site)
+curl "http://127.0.0.1:8787/goodness/demo/hello/" \
+  -H "X-Forwarded-Host: main--demo--goodness.aem.network"
+curl "http://127.0.0.1:8787/goodness/demo/hello/styles.css" \
+  -H "X-Forwarded-Host: main--demo--goodness.aem.network"
 ```
 
 R2 keys mirror the public path:
@@ -114,8 +115,12 @@ or
 X-WAC-Key: <key>
 ```
 
-Uploads and deletes require a matching key. GETs are public so browsers can
-load HTML/CSS/JS cross-origin without credentials.
+Uploads and deletes require a matching key.
+
+Asset GETs/HEADs require an `X-Forwarded-Host` of the form
+`<branch>--<site>--<org>.aem.network` whose `site` and `org` match the URL
+path (set by the fronting `*.aem.network` edge). Direct requests without that
+header are rejected with `403`.
 
 ### Default asset (no index.html)
 
@@ -127,12 +132,3 @@ X-WAC-Default: path/to/entry.html
 
 That path is stored in `.wac/manifest.json` as `default`. Requests to the
 container root then respond with **301** to that file.
-
-### Manager UI
-
-The worker proxies `/tools/*` to the AEM EDS origin
-(`https://main--wac--davidnuescheler.aem.live/`), using the same request
-rewriting as the [AEM Cloudflare production worker](https://github.com/adobe/aem-cloudflare-prod-worker).
-Open `/tools/wac/wac.html` on the worker (or on this site). Sign in with email +
-shared token against an org/site, then browse, preview, upload, replace, or
-delete containers.

@@ -11,7 +11,7 @@
  * injected in <head> before <body> exists.
  */
 
-/** Keep in sync with tools/wac/wac.html htmlToPlainLines. */
+/** Keep in sync with manager htmlToPlainLines / content export. */
 const BLOCK_SELECTOR = [
   'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'li', 'dt', 'dd', 'blockquote', 'pre', 'figcaption',

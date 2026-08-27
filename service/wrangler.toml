@@ -21,6 +21,3 @@ preview_id = "4ec67669f7604cffab7c792b08916b15"
 
 [vars]
 MAX_ZIP_BYTES = "52428800"
-ORIGIN_HOSTNAME = "main--wac--davidnuescheler.aem.live"
-# This worker is not the production CDN for the AEM site, so keep short origin TTLs.
-PUSH_INVALIDATION = "disabled"
