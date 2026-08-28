@@ -1,13 +1,10 @@
 /**
- * Inject a client script into HTML responses that:
- *  1. Applies ?content= overlays (newline-separated plain text → leaf slots)
- *  2. Posts intrinsic document height to the parent frame via postMessage
+ * Inject a client script into HTML responses that applies ?content= overlays
+ * (newline-separated plain text → leaf slots).
  *
  * For Design Component pages with ?content=, also seeds window.__resources so
  * DC skips its pristine-source refetch of location.href (which would wipe the
  * overlay). Do not put an x-dc start tag in comments — parseDcText would match it.
- *
- * Height reporting runs even without ?content=, whenever this document is framed.
  */
 
 /** Keep in sync with manager htmlToPlainLines / content export. */
@@ -27,8 +24,9 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
     var params = new URLSearchParams(location.search);
     var raw = params.has('content') ? params.get('content') : null;
     var hasContent = raw != null && raw !== '';
+    if (!hasContent) return;
 
-    if (hasContent && !window.__resources) {
+    if (!window.__resources) {
       // Bundled/offline signal for DC runtime: skip pristine-source refetch.
       window.__resources = {};
     }
@@ -93,7 +91,7 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
     }
 
     function applyOverlay() {
-      if (!hasContent || applied) return;
+      if (applied) return;
       var root = document.body || document.documentElement;
       if (!root) return;
 
@@ -110,127 +108,13 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       var n = Math.min(lines.length, targets.length);
       for (var i = 0; i < n; i++) setOwnText(targets[i], lines[i]);
       document.documentElement.setAttribute('data-wac-content-applied', String(n));
-      emitHeight();
     }
 
-    // Cap absurd scroll/layout metrics (browsers often clamp near 2^24).
-    var HEIGHT_CAP = 50000;
-
-    function isOutOfFlow(el) {
-      try {
-        var pos = window.getComputedStyle(el).position;
-        return pos === 'fixed' || pos === 'sticky';
-      } catch (err) {
-        return false;
-      }
-    }
-
-    function measureHeight() {
-      var body = document.body;
-      if (!body) return 0;
-
-      var origin = body.getBoundingClientRect().top;
-      var bottom = origin;
-
-      function consider(el) {
-        if (!el || el.nodeType !== 1 || isOutOfFlow(el)) return;
-        var rect = el.getBoundingClientRect();
-        if (!rect || !isFinite(rect.bottom)) return;
-        if (rect.bottom > bottom) bottom = rect.bottom;
-      }
-
-      // Prefer the rendered DC host when present; else in-flow body children.
-      var dcRoot = document.getElementById('dc-root');
-      if (dcRoot) {
-        consider(dcRoot);
-        var kids = dcRoot.children;
-        for (var i = 0; i < kids.length; i++) consider(kids[i]);
-      } else {
-        var children = body.children;
-        for (var j = 0; j < children.length; j++) consider(children[j]);
-      }
-
-      var height = Math.ceil(Math.max(0, bottom - origin));
-      if (!height || height > HEIGHT_CAP) {
-        // Fallback: offsetHeight of the content root, still capped.
-        var root = dcRoot || body;
-        height = Math.ceil(root.offsetHeight || 0);
-      }
-      if (height > HEIGHT_CAP) return 0;
-      return height;
-    }
-
-    var lastHeight = -1;
-    var heightTimer = 0;
-
-    function emitHeight() {
-      if (!window.parent || window.parent === window) return;
-      var height = measureHeight();
-      if (!height || height === lastHeight) return;
-      lastHeight = height;
-      try {
-        window.parent.postMessage({
-          source: 'wac',
-          type: 'intrinsic-height',
-          height: height,
-          href: String(location.href),
-        }, '*');
-      } catch (err) {}
-    }
-
-    function scheduleEmitHeight() {
-      if (heightTimer) clearTimeout(heightTimer);
-      heightTimer = setTimeout(function() {
-        heightTimer = 0;
-        emitHeight();
-      }, 50);
-    }
-
-    function startHeightReporter() {
-      if (!window.parent || window.parent === window) return;
-      emitHeight();
-      if (typeof ResizeObserver === 'function') {
-        var ro = new ResizeObserver(scheduleEmitHeight);
-        if (document.body) ro.observe(document.body);
-        var dcRoot = document.getElementById('dc-root');
-        if (dcRoot) ro.observe(dcRoot);
-        // DC may mount #dc-root after boot — watch for it.
-        if (typeof MutationObserver === 'function' && document.body) {
-          var mo = new MutationObserver(function() {
-            var el = document.getElementById('dc-root');
-            if (el) {
-              try { ro.observe(el); } catch (err) {}
-              scheduleEmitHeight();
-            }
-          });
-          mo.observe(document.body, { childList: true, subtree: true });
-        }
-      }
-      window.addEventListener('load', scheduleEmitHeight);
-      window.addEventListener('resize', scheduleEmitHeight);
-      if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
-        document.fonts.ready.then(scheduleEmitHeight).catch(function() {});
-      }
-      // Late layout from framed runtimes (e.g. DC React boot).
-      setTimeout(scheduleEmitHeight, 0);
-      setTimeout(scheduleEmitHeight, 250);
-      setTimeout(scheduleEmitHeight, 1000);
-    }
-
-    if (hasContent) {
-      if (document.body) applyOverlay();
-      else if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', applyOverlay);
-      } else {
-        applyOverlay();
-      }
-    }
-
-    if (document.body) startHeightReporter();
+    if (document.body) applyOverlay();
     else if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', startHeightReporter);
+      document.addEventListener('DOMContentLoaded', applyOverlay);
     } else {
-      startHeightReporter();
+      applyOverlay();
     }
   } catch (e) {
     try { console.error('[wac-content-bridge]', e); } catch (err) {}
