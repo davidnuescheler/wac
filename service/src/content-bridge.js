@@ -1,14 +1,13 @@
 /**
- * Inject a client script into HTML responses that applies ?content= overlays.
- * Inverse of the manager content panel: newline-separated plain text lines
- * replace WAC leaf text slots in document order.
+ * Inject a client script into HTML responses that:
+ *  1. Applies ?content= overlays (newline-separated plain text → leaf slots)
+ *  2. Posts intrinsic document height to the parent frame via postMessage
  *
- * For Design Component pages, also seeds window.__resources so DC skips its
- * pristine-source refetch of location.href (which would wipe the overlay).
+ * For Design Component pages with ?content=, also seeds window.__resources so
+ * DC skips its pristine-source refetch of location.href (which would wipe the
+ * overlay). Do not put an x-dc start tag in comments — parseDcText would match it.
  *
- * Applied once, synchronously when possible, before page scripts so animations
- * see the overlaid text as the initial DOM; defers to DOMContentLoaded when
- * injected in <head> before <body> exists.
+ * Height reporting runs even without ?content=, whenever this document is framed.
  */
 
 /** Keep in sync with manager htmlToPlainLines / content export. */
@@ -26,16 +25,13 @@ const BLOCK_SELECTOR = [
 const CONTENT_BRIDGE_SCRIPT = `(function(){
   try {
     var params = new URLSearchParams(location.search);
-    if (!params.has('content')) return;
-    var raw = params.get('content');
-    if (raw == null || raw === '') return;
+    var raw = params.has('content') ? params.get('content') : null;
+    var hasContent = raw != null && raw !== '';
 
-    // Design Component runtime re-fetches location.href for a pristine
-    // x-dc template and would wipe DOM overlays. A truthy __resources map
-    // is its bundled/offline signal to skip that refetch. Keep any real map.
-    // Do not write an x-dc start tag in this file — parseDcText matches the
-    // first one in the fetched HTML and would hit a comment here first.
-    if (!window.__resources) window.__resources = {};
+    if (hasContent && !window.__resources) {
+      // Bundled/offline signal for DC runtime: skip pristine-source refetch.
+      window.__resources = {};
+    }
 
     var BLOCK = '${BLOCK_SELECTOR}';
     var applied = false;
@@ -89,8 +85,6 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
     }
 
     function linesFromContent(text) {
-      // Same shape as manager "Copy to block": LF-separated plain lines.
-      // URLSearchParams already decodes %0A to newlines and + to spaces.
       return String(text || '')
         .replace(/\\u00a0/g, ' ')
         .split(/\\r?\\n/)
@@ -99,7 +93,7 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
     }
 
     function applyOverlay() {
-      if (applied) return;
+      if (!hasContent || applied) return;
       var root = document.body || document.documentElement;
       if (!root) return;
 
@@ -107,7 +101,6 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       if (!lines.length) return;
 
       var targets = slots(root);
-      // Injected before a <head> script: body is not parsed yet. Wait for it.
       if (!targets.length && document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', applyOverlay);
         return;
@@ -117,13 +110,81 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       var n = Math.min(lines.length, targets.length);
       for (var i = 0; i < n; i++) setOwnText(targets[i], lines[i]);
       document.documentElement.setAttribute('data-wac-content-applied', String(n));
+      emitHeight();
     }
 
-    if (document.body) applyOverlay();
+    function measureHeight() {
+      var doc = document.documentElement;
+      var body = document.body;
+      var h = 0;
+      if (doc) {
+        h = Math.max(h, doc.scrollHeight || 0, doc.offsetHeight || 0);
+      }
+      if (body) {
+        h = Math.max(h, body.scrollHeight || 0, body.offsetHeight || 0);
+      }
+      return h;
+    }
+
+    var lastHeight = -1;
+    var heightTimer = 0;
+
+    function emitHeight() {
+      if (!window.parent || window.parent === window) return;
+      var height = measureHeight();
+      if (!height || height === lastHeight) return;
+      lastHeight = height;
+      try {
+        window.parent.postMessage({
+          source: 'wac',
+          type: 'intrinsic-height',
+          height: height,
+          href: String(location.href),
+        }, '*');
+      } catch (err) {}
+    }
+
+    function scheduleEmitHeight() {
+      if (heightTimer) clearTimeout(heightTimer);
+      heightTimer = setTimeout(function() {
+        heightTimer = 0;
+        emitHeight();
+      }, 50);
+    }
+
+    function startHeightReporter() {
+      if (!window.parent || window.parent === window) return;
+      emitHeight();
+      if (typeof ResizeObserver === 'function') {
+        var ro = new ResizeObserver(scheduleEmitHeight);
+        if (document.documentElement) ro.observe(document.documentElement);
+        if (document.body) ro.observe(document.body);
+      }
+      window.addEventListener('load', scheduleEmitHeight);
+      window.addEventListener('resize', scheduleEmitHeight);
+      if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+        document.fonts.ready.then(scheduleEmitHeight).catch(function() {});
+      }
+      // Late layout from framed runtimes (e.g. DC React boot).
+      setTimeout(scheduleEmitHeight, 0);
+      setTimeout(scheduleEmitHeight, 250);
+      setTimeout(scheduleEmitHeight, 1000);
+    }
+
+    if (hasContent) {
+      if (document.body) applyOverlay();
+      else if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyOverlay);
+      } else {
+        applyOverlay();
+      }
+    }
+
+    if (document.body) startHeightReporter();
     else if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', applyOverlay);
+      document.addEventListener('DOMContentLoaded', startHeightReporter);
     } else {
-      applyOverlay();
+      startHeightReporter();
     }
   } catch (e) {
     try { console.error('[wac-content-bridge]', e); } catch (err) {}
