@@ -113,17 +113,51 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       emitHeight();
     }
 
+    // Cap absurd scroll/layout metrics (browsers often clamp near 2^24).
+    var HEIGHT_CAP = 50000;
+
+    function isOutOfFlow(el) {
+      try {
+        var pos = window.getComputedStyle(el).position;
+        return pos === 'fixed' || pos === 'sticky';
+      } catch (err) {
+        return false;
+      }
+    }
+
     function measureHeight() {
-      var doc = document.documentElement;
       var body = document.body;
-      var h = 0;
-      if (doc) {
-        h = Math.max(h, doc.scrollHeight || 0, doc.offsetHeight || 0);
+      if (!body) return 0;
+
+      var origin = body.getBoundingClientRect().top;
+      var bottom = origin;
+
+      function consider(el) {
+        if (!el || el.nodeType !== 1 || isOutOfFlow(el)) return;
+        var rect = el.getBoundingClientRect();
+        if (!rect || !isFinite(rect.bottom)) return;
+        if (rect.bottom > bottom) bottom = rect.bottom;
       }
-      if (body) {
-        h = Math.max(h, body.scrollHeight || 0, body.offsetHeight || 0);
+
+      // Prefer the rendered DC host when present; else in-flow body children.
+      var dcRoot = document.getElementById('dc-root');
+      if (dcRoot) {
+        consider(dcRoot);
+        var kids = dcRoot.children;
+        for (var i = 0; i < kids.length; i++) consider(kids[i]);
+      } else {
+        var children = body.children;
+        for (var j = 0; j < children.length; j++) consider(children[j]);
       }
-      return h;
+
+      var height = Math.ceil(Math.max(0, bottom - origin));
+      if (!height || height > HEIGHT_CAP) {
+        // Fallback: offsetHeight of the content root, still capped.
+        var root = dcRoot || body;
+        height = Math.ceil(root.offsetHeight || 0);
+      }
+      if (height > HEIGHT_CAP) return 0;
+      return height;
     }
 
     var lastHeight = -1;
@@ -157,8 +191,20 @@ const CONTENT_BRIDGE_SCRIPT = `(function(){
       emitHeight();
       if (typeof ResizeObserver === 'function') {
         var ro = new ResizeObserver(scheduleEmitHeight);
-        if (document.documentElement) ro.observe(document.documentElement);
         if (document.body) ro.observe(document.body);
+        var dcRoot = document.getElementById('dc-root');
+        if (dcRoot) ro.observe(dcRoot);
+        // DC may mount #dc-root after boot — watch for it.
+        if (typeof MutationObserver === 'function' && document.body) {
+          var mo = new MutationObserver(function() {
+            var el = document.getElementById('dc-root');
+            if (el) {
+              try { ro.observe(el); } catch (err) {}
+              scheduleEmitHeight();
+            }
+          });
+          mo.observe(document.body, { childList: true, subtree: true });
+        }
       }
       window.addEventListener('load', scheduleEmitHeight);
       window.addEventListener('resize', scheduleEmitHeight);
